@@ -19,12 +19,12 @@ include(${CMAKE_CURRENT_LIST_DIR}/cmake/utils.cmake)
 set(ignoreMe "${VLLM_PYTHON_PATH}")
 
 # Supported python versions. These should be kept in sync with setup.py.
-set(PYTHON_SUPPORTED_VERSIONS "3.9" "3.10" "3.11" "3.12" "3.13")
+set(PYTHON_SUPPORTED_VERSIONS "3.9" "3.10" "3.11" "3.12" "3.13" "3.14")
 
 # Supported NVIDIA architectures.
 set(CUDA_SUPPORTED_ARCHS "8.0;8.6;8.9;9.0")
 if(${CMAKE_CUDA_COMPILER_VERSION} VERSION_GREATER_EQUAL 13.0)
-    list(APPEND CUDA_SUPPORTED_ARCHS "10.0" "11.0" "12.0")
+    list(APPEND CUDA_SUPPORTED_ARCHS "10.0" "11.0" "12.0" "12.1")
 elseif(${CMAKE_CUDA_COMPILER_VERSION} VERSION_GREATER_EQUAL 12.8)
     list(APPEND CUDA_SUPPORTED_ARCHS "10.0" "10.1" "12.0")
 endif()
