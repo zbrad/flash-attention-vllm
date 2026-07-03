@@ -267,48 +267,62 @@ if (FA3_ENABLED AND ${CMAKE_CUDA_COMPILER_VERSION} GREATER_EQUAL 12.0)
             CUDA_ARCHS "${FA3_ARCHS}")
     endif()
 
-    define_gpu_extension_target(
-        _vllm_fa3_C
-        DESTINATION vllm_flash_attn
-        LANGUAGE ${VLLM_GPU_LANG}
-        SOURCES
-            hopper/flash_fwd_combine.cu
-            hopper/flash_prepare_scheduler.cu
-            hopper/flash_api_stable.cpp
-            ${FA3_GEN_SRCS}
-        COMPILE_FLAGS ${VLLM_FA_GPU_FLAGS}
-        ARCHITECTURES "" # LucasW: this is ignored for cuda and set on a per-file basis
-        USE_SABI 3
-        WITH_SOABI)
+    if (VLLM_GPU_LANG STREQUAL "CUDA" AND NOT FA3_ARCHS)
+        # No requested CUDA_ARCHS intersect Hopper (9.0a) -- e.g. a
+        # Blackwell/GB10-only (12.1) build. FA3 has no PTX fallback (unlike
+        # FA2's "8.0+PTX"), so there is nothing useful to compile: skip the
+        # ~550MB of dead-weight binary this would otherwise produce with no
+        # gencode flags attached. Define a no-op target of the same name so
+        # external build drivers that unconditionally request
+        # `--target=_vllm_fa3_C` / `--component _vllm_fa3_C` (e.g. vLLM's
+        # own setup.py) still succeed trivially.
+        message(STATUS "FA3_ARCHS is empty (no Hopper/9.0 in CUDA_ARCHS): "
+                "skipping _vllm_fa3_C build.")
+        add_custom_target(_vllm_fa3_C)
+    else()
+        define_gpu_extension_target(
+            _vllm_fa3_C
+            DESTINATION vllm_flash_attn
+            LANGUAGE ${VLLM_GPU_LANG}
+            SOURCES
+                hopper/flash_fwd_combine.cu
+                hopper/flash_prepare_scheduler.cu
+                hopper/flash_api_stable.cpp
+                ${FA3_GEN_SRCS}
+            COMPILE_FLAGS ${VLLM_FA_GPU_FLAGS}
+            ARCHITECTURES "" # LucasW: this is ignored for cuda and set on a per-file basis
+            USE_SABI 3
+            WITH_SOABI)
 
-    # TORCH_TARGET_VERSION only on the stable API TU: applying it to hopper .cu
-    set_source_files_properties(hopper/flash_api_stable.cpp PROPERTIES
-        COMPILE_DEFINITIONS "TORCH_TARGET_VERSION=0x020B000000000000ULL")
+        # TORCH_TARGET_VERSION only on the stable API TU: applying it to hopper .cu
+        set_source_files_properties(hopper/flash_api_stable.cpp PROPERTIES
+            COMPILE_DEFINITIONS "TORCH_TARGET_VERSION=0x020B000000000000ULL")
 
-    target_include_directories(_vllm_fa3_C PRIVATE
-        hopper
-        csrc/common
-        csrc/cutlass/include)
+        target_include_directories(_vllm_fa3_C PRIVATE
+            hopper
+            csrc/common
+            csrc/cutlass/include)
 
-    # custom definitions
-    target_compile_definitions(_vllm_fa3_C PRIVATE
-        FLASHATTENTION_DISABLE_BACKWARD
-        FLASHATTENTION_DISABLE_DROPOUT
-        # FLASHATTENTION_DISABLE_ALIBI
-        # FLASHATTENTION_DISABLE_SOFTCAP
-        FLASHATTENTION_DISABLE_UNEVEN_K
-        # FLASHATTENTION_DISABLE_LOCAL
-        FLASHATTENTION_DISABLE_PYBIND
-        FLASHATTENTION_VARLEN_ONLY # Custom flag to save on binary size
-        FLASHATTENTION_PACKGQA_ONLY # Custom flag to save on binary size
-        FLASHATTENTION_DISABLE_CLUSTER # disabled for varlen in any case
-        FLASHATTENTION_DISABLE_SM8x
-        # FLASHATTENTION_DISABLE_HDIMDIFF64
-        # FLASHATTENTION_DISABLE_HDIMDIFF192
-        FLASHATTENTION_DISABLE_APPENDKV
-        CUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED
-        CUTLASS_ENABLE_GDC_FOR_SM90
-    )
+        # custom definitions
+        target_compile_definitions(_vllm_fa3_C PRIVATE
+            FLASHATTENTION_DISABLE_BACKWARD
+            FLASHATTENTION_DISABLE_DROPOUT
+            # FLASHATTENTION_DISABLE_ALIBI
+            # FLASHATTENTION_DISABLE_SOFTCAP
+            FLASHATTENTION_DISABLE_UNEVEN_K
+            # FLASHATTENTION_DISABLE_LOCAL
+            FLASHATTENTION_DISABLE_PYBIND
+            FLASHATTENTION_VARLEN_ONLY # Custom flag to save on binary size
+            FLASHATTENTION_PACKGQA_ONLY # Custom flag to save on binary size
+            FLASHATTENTION_DISABLE_CLUSTER # disabled for varlen in any case
+            FLASHATTENTION_DISABLE_SM8x
+            # FLASHATTENTION_DISABLE_HDIMDIFF64
+            # FLASHATTENTION_DISABLE_HDIMDIFF192
+            FLASHATTENTION_DISABLE_APPENDKV
+            CUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED
+            CUTLASS_ENABLE_GDC_FOR_SM90
+        )
+    endif()
 elseif(${CMAKE_CUDA_COMPILER_VERSION} VERSION_LESS 12.0)
     message(STATUS "FA3 is disabled because CUDA version is not 12.0 or later.")
 endif ()
