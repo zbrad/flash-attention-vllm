@@ -137,7 +137,13 @@ if (FA2_ENABLED)
 
     # For CUDA we set the architectures on a per file basis
     if (VLLM_GPU_LANG STREQUAL "CUDA")
-        cuda_archs_loose_intersection(FA2_ARCHS "8.0+PTX" "${CUDA_ARCHS}")
+        # This fork targets Blackwell/GB10 only: compile real sm_121 SASS
+        # directly rather than falling back to 8.0+PTX driver JIT. PTX-JIT
+        # compatibility is gated by the installed driver's own PTX-ISA
+        # ceiling (independent of which SM it targets) and can reject PTX
+        # from a newer-minor-version nvcc outright -- see
+        # https://gist.github.com/zbrad/31961dd490305672c069201c47b90812
+        cuda_archs_loose_intersection(FA2_ARCHS "12.1" "${CUDA_ARCHS}")
         message(STATUS "FA2_ARCHS: ${FA2_ARCHS}")
 
         set_gencode_flags_for_srcs(
