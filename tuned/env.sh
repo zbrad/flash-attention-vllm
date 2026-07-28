@@ -61,3 +61,58 @@ export CUDA_ARCHS="${GPU_TUNED_FA2_ARCH}"
 export FA2_TUNED_ARCH="${GPU_TUNED_FA2_ARCH}"
 
 echo "[tuned/env] GPU_TUNED_VARIANT=${GPU_TUNED_VARIANT} FA2_TUNED_ARCH=${FA2_TUNED_ARCH} CUDA_HOME=${CUDA_HOME:-<unset>}"
+
+# gpu_tuned_verify_arch <path-to-.so> — confirms a compiled library's
+# embedded cubin(s) are EXACTLY sm_${GPU_TUNED_FA2_ARCH}, via cuobjdump.
+# Same name/signature as the other tuned-builds repos' env.sh equivalents
+# -- this repo previously had none of these empirical checks at all.
+gpu_tuned_verify_arch() {
+    local so_file="$1"
+    if [[ ! -f "${so_file}" ]]; then
+        echo "ERROR: gpu_tuned_verify_arch: no such file: ${so_file}" >&2
+        return 1
+    fi
+    command -v cuobjdump >/dev/null 2>&1 || {
+        echo "ERROR: gpu_tuned_verify_arch: cuobjdump not found on PATH (expected under \$CUDA_HOME/bin)." >&2
+        return 1
+    }
+    local expected_arch found found_count
+    expected_arch="$(echo "${GPU_TUNED_FA2_ARCH}" | tr -d '.')"
+    found="$(cuobjdump --list-elf "${so_file}" 2>/dev/null | grep -oE 'sm_[0-9]+[a-z]?' | sort -u)"
+    if [[ -z "${found}" ]]; then
+        echo "ERROR: gpu_tuned_verify_arch: cuobjdump found no embedded cubins in ${so_file} at all." >&2
+        return 1
+    fi
+    found_count="$(echo "${found}" | wc -l)"
+    if [[ "${found_count}" -ne 1 ]]; then
+        echo "ERROR: ${so_file} embeds MULTIPLE arch targets ($(echo "${found}" | tr '\n' ' ')) -- this is supposed to be a single-arch tuned build, not a fat multi-arch one." >&2
+        return 1
+    fi
+    if [[ "${found}" != "sm_${expected_arch}" ]]; then
+        echo "ERROR: ${so_file} is not built for sm_${expected_arch} (found: ${found})." >&2
+        return 1
+    fi
+    echo "OK: ${so_file} confirmed single-arch ${found} (matches requested sm_${expected_arch})"
+}
+
+# embed_build_info <so_path> <variant> <package> <version> [hw_label] —
+# embeds a greppable build-info string into a custom ELF section
+# (.flash_attn_build_info) on the given .so, readable later via
+# `readelf -p .flash_attn_build_info <so>` or plain `strings`. Safe at
+# runtime: a custom section with no program-header entry is simply
+# ignored by the dynamic loader. Same technique/name as the other
+# tuned-builds repos' env.sh equivalents.
+embed_build_info() {
+    local so_path="$1" variant="$2" package="$3" version="$4" hw_label="${5:-${2}}"
+    local tmp
+    tmp="$(mktemp)"
+    echo "flash-attention-${variant} build: ${package} v${version} (${hw_label}), https://github.com/zbrad/flash-attention, built $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${tmp}"
+    # Idempotent: objcopy --add-section on a section name that already
+    # exists (e.g. re-packaging without a clean) empirically corrupts its
+    # own in-place rewrite ("file format not recognized" on its own temp
+    # output) -- strip any prior stamp first. Same fix as the other repos'
+    # tuned/env.sh, hit for real running a live verification.
+    objcopy --remove-section .flash_attn_build_info "${so_path}" 2>/dev/null || true
+    objcopy --add-section .flash_attn_build_info="${tmp}" "${so_path}"
+    rm -f "${tmp}"
+}

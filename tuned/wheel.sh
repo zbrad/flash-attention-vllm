@@ -45,6 +45,20 @@ echo "=========================================="
 echo "FLASH_ATTN_LOCAL_VERSION: ${FLASH_ATTN_LOCAL_VERSION}"
 echo ""
 
+# _vllm_fa2_C.abi3.so is where FA2_TUNED_ARCH's actual device code lands
+# -- verify + stamp it before packaging, same discipline as the other
+# tuned-builds repos' wheel.sh. FA3 (_vllm_fa3_C.abi3.so) is a no-op
+# target on non-Hopper (gb10/rtx40/rtx50), so it's never built here --
+# only FA2 gets this treatment.
+FA2_SO="${REPO_ROOT}/vllm_flash_attn/_vllm_fa2_C.abi3.so"
+if [[ -f "${FA2_SO}" ]]; then
+    gpu_tuned_verify_arch "${FA2_SO}"
+    embed_build_info "${FA2_SO}" "${GPU_TUNED_VARIANT}" "vllm_flash_attn" "${FLASH_ATTN_LOCAL_VERSION}" "${GPU_TUNED_HW_LABEL}"
+else
+    echo "ERROR: ${FA2_SO} not found -- run tuned/build.sh ${GPU_TUNED_VARIANT} first." >&2
+    exit 1
+fi
+
 pip install --upgrade build
 rm -rf "${REPO_ROOT}/dist"
 python3 -m build --wheel --no-isolation
