@@ -184,6 +184,20 @@ class cmake_build_ext(build_ext):
         if nvcc_threads:
             cmake_args += ['-DNVCC_THREADS={}'.format(nvcc_threads)]
 
+        # Forward a tuned single-arch build's target (see tuned/env.sh) --
+        # CMakeLists.txt otherwise auto-detects CUDA_ARCHS from the
+        # physical GPU present at build time via extract_unique_cuda_archs_
+        # ascending(), with no way to force a specific value through
+        # `pip install -e .` (confirmed: nothing else in this file passes
+        # -DCUDA_ARCHS). FA2_TUNED_ARCH is a separate, explicit single-arch
+        # override consumed directly by CMakeLists.txt's FA2 target
+        # selection (bypasses cuda_archs_loose_intersection(), which
+        # doesn't reliably handle the "a" suffix -- see that file).
+        if os.environ.get('CUDA_ARCHS'):
+            cmake_args += ['-DCUDA_ARCHS={}'.format(os.environ['CUDA_ARCHS'])]
+        if os.environ.get('FA2_TUNED_ARCH'):
+            cmake_args += ['-DFA2_TUNED_ARCH={}'.format(os.environ['FA2_TUNED_ARCH'])]
+
         if is_ninja_available():
             build_tool = ['-G', 'Ninja']
             cmake_args += [

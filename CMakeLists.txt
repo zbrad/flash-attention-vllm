@@ -137,13 +137,33 @@ if (FA2_ENABLED)
 
     # For CUDA we set the architectures on a per file basis
     if (VLLM_GPU_LANG STREQUAL "CUDA")
-        # This fork targets Blackwell/GB10 only: compile real sm_121 SASS
-        # directly rather than falling back to 8.0+PTX driver JIT. PTX-JIT
-        # compatibility is gated by the installed driver's own PTX-ISA
-        # ceiling (independent of which SM it targets) and can reject PTX
-        # from a newer-minor-version nvcc outright -- see
-        # https://gist.github.com/zbrad/31961dd490305672c069201c47b90812
-        cuda_archs_loose_intersection(FA2_ARCHS "12.1" "${CUDA_ARCHS}")
+        # This fork targets a single owned/verified GPU per tuned build:
+        # compile real SASS directly rather than falling back to 8.0+PTX
+        # driver JIT. PTX-JIT compatibility is gated by the installed
+        # driver's own PTX-ISA ceiling (independent of which SM it targets)
+        # and can reject PTX from a newer-minor-version nvcc outright --
+        # see https://gist.github.com/zbrad/31961dd490305672c069201c47b90812
+        #
+        # FA2_TUNED_ARCH (set via tuned/env.sh, e.g. "12.1a" for gb10,
+        # "8.9" for rtx40, "12.0a" for rtx50) bypasses
+        # cuda_archs_loose_intersection() entirely for tuned builds: that
+        # function's generic version-comparison path doesn't reliably
+        # handle the "a" (family-specific SASS) suffix -- only "9.0a" and
+        # "10.0a" get special-cased pre-processing in cmake/utils.cmake, so
+        # "12.1a"/"12.0a" would fall through to plain VERSION_LESS_EQUAL
+        # comparison on a non-numeric-suffixed string, which is unreliable.
+        # A tuned build already knows its exact single target and needs no
+        # matching/intersection logic at all -- this is why the original
+        # GB10 patch this comment used to describe hardcoded a bare "12.1"
+        # (no "a") directly as the intersection source, sidestepping the
+        # bug rather than fixing it. Falls back to the original upstream
+        # "8.0+PTX" intersection when FA2_TUNED_ARCH is unset, so non-tuned
+        # builds are unaffected.
+        if (FA2_TUNED_ARCH)
+            set(FA2_ARCHS "${FA2_TUNED_ARCH}")
+        else()
+            cuda_archs_loose_intersection(FA2_ARCHS "8.0+PTX" "${CUDA_ARCHS}")
+        endif()
         message(STATUS "FA2_ARCHS: ${FA2_ARCHS}")
 
         set_gencode_flags_for_srcs(
