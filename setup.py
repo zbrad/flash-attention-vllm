@@ -294,6 +294,16 @@ def get_nvcc_cuda_version() -> Version:
 
 def get_version() -> str:
     version = get_package_version()
+    # Skip the auto cu<NNN> append entirely when FLASH_ATTN_LOCAL_VERSION was
+    # set: get_package_version() already folded it into version's one "+"
+    # local-version segment above, and PEP 440 allows only a single "+" --
+    # appending a second one here (e.g. "+gb10.cu133" -> "+gb10.cu133+cu133")
+    # produces an InvalidVersion the build backend rejects outright. Callers
+    # setting FLASH_ATTN_LOCAL_VERSION explicitly (see tuned/wheel.sh) are
+    # expected to already include whatever CUDA-version disambiguation they
+    # need in that value.
+    if os.environ.get("FLASH_ATTN_LOCAL_VERSION"):
+        return version
     cuda_version = str(get_nvcc_cuda_version())
     if cuda_version != MAIN_CUDA_VERSION:
         cuda_version_str = cuda_version.replace(".", "")[:3]

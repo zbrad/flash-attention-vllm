@@ -61,7 +61,13 @@ fi
 
 pip install --upgrade build
 rm -rf "${REPO_ROOT}/dist"
-python3 -m build --wheel --no-isolation
+# --skip-dependency-check: setup.py's install_requires pins
+# torch=={PYTORCH_VERSION} (whatever stock torch existed upstream when
+# that constant was last set) -- build's own pre-flight dependency check
+# rejects this box's custom GB10 torch build for not matching that exact
+# pin, even though it's what tuned/build.sh actually built and ran
+# against (same reason tuned/build.sh's own pip install uses --no-deps).
+python3 -m build --wheel --no-isolation --skip-dependency-check
 
 WHEEL="$(ls "${REPO_ROOT}"/dist/vllm_flash_attn-*.whl 2>/dev/null | head -1)"
 [[ -z "${WHEEL}" ]] && { echo "ERROR: no wheel found in dist/" >&2; exit 1; }
@@ -71,8 +77,14 @@ echo "Built wheel: $(basename "${WHEEL}") ($(du -sh "${WHEEL}" | awk '{print $1}
 # than re-deriving it a second time (avoids any drift between what
 # setup.py actually computed and what this script assumes it computed).
 WHEEL_VERSION="$(basename "${WHEEL}" | sed -E 's/^vllm_flash_attn-([^-]+)-.*/\1/')"
+# WHEEL_VERSION includes the "+FLASH_ATTN_LOCAL_VERSION" local-version
+# segment (e.g. "2.7.2.post1+gb10.cu133") -- strip it for the release tag,
+# which already appends -<variant>-cu<NNN> separately below; keeping both
+# would duplicate the variant/cuda tag in the tag name (and a literal "+"
+# in a git tag needs URL-encoding wherever it's linked).
+WHEEL_BASE_VERSION="${WHEEL_VERSION%%+*}"
 
-RELEASE_TAG="v${WHEEL_VERSION}-${GPU_TUNED_VARIANT}-cu${CUDA_VERSION_COMPACT}"
+RELEASE_TAG="v${WHEEL_BASE_VERSION}-${GPU_TUNED_VARIANT}-cu${CUDA_VERSION_COMPACT}"
 RELEASE_TITLE="vllm_flash_attn ${WHEEL_VERSION} — ${GPU_TUNED_HW_LABEL} wheel"
 
 echo ""
