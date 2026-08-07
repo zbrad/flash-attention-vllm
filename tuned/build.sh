@@ -59,7 +59,16 @@ echo "Installing other build-time requirements (cmake, ninja, packaging, setupto
 pip install "cmake>=3.26" ninja packaging "setuptools>=49.4.0" wheel jinja2
 
 echo "Building vllm_flash_attn (this will take a long time)..."
-pip install --no-build-isolation -v -e .
+# gb10: setup.py's declared torch==<PYTORCH_VERSION> pin (checked/installed
+# above only for non-gb10) doesn't match our custom zbrad/pytorch dev build
+# (e.g. 2.14.0.dev...gb10.cu133) and isn't on PyPI at all for this platform
+# -- pip's normal dependency resolution for -e . fails outright trying to
+# satisfy it ("No matching distribution found for torch==2.4.0"). The torch
+# already installed/verified above is what we actually want; skip re-
+# resolving it (and this package's other deps, already present) via --no-deps.
+PIP_EXTRA_ARGS=()
+[[ "${GPU_TUNED_VARIANT}" == "gb10" ]] && PIP_EXTRA_ARGS+=(--no-deps)
+pip install --no-build-isolation -v "${PIP_EXTRA_ARGS[@]}" -e .
 
 echo ""
 echo "Smoke test: import vllm_flash_attn, confirm it loads..."

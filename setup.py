@@ -302,7 +302,33 @@ def get_version() -> str:
 
 
 ext_modules.append(CMakeExtension(name="vllm_flash_attn._vllm_fa2_C"))
-ext_modules.append(CMakeExtension(name="vllm_flash_attn._vllm_fa3_C"))
+
+# CMakeLists.txt defines _vllm_fa3_C as a no-op target (add_custom_target,
+# no sources) whenever the requested CUDA_ARCHS don't intersect Hopper
+# (9.0a) -- e.g. a tuned single-arch Blackwell/GB10 build (CUDA_ARCHS=
+# "12.1a") -- since FA3 has no PTX fallback and there's nothing useful to
+# compile for it. That's fine at the CMake level (`cmake --build` on a
+# no-op target succeeds trivially), but setuptools' own
+# copy_extensions_to_source() unconditionally expects every declared
+# ext_modules entry's compiled artifact to exist and errors out
+# ("can't copy ... doesn't exist or not a regular file") when it doesn't.
+# Mirror CMakeLists.txt's own intersection check here using the same
+# CUDA_ARCHS env var it reads (see cmake_build_ext.configure above): only
+# declare _vllm_fa3_C when Hopper is actually targeted, or when CUDA_ARCHS
+# isn't set at all (default/CI multi-arch build -- unchanged behavior).
+_cuda_archs = os.environ.get('CUDA_ARCHS', '')
+if not _cuda_archs or '9.0' in _cuda_archs:
+    ext_modules.append(CMakeExtension(name="vllm_flash_attn._vllm_fa3_C"))
+else:
+    # Plain print(), not logger.info(): this runs at module import time,
+    # before setup.py's own Command machinery attaches any logging
+    # handler (confirmed empirically -- logger.info here is silently
+    # dropped, unlike the identical-looking logger.info("Using MAX_JOBS...")
+    # a few methods down, which runs later, during an active Command).
+    print(
+        f"CUDA_ARCHS={_cuda_archs} has no Hopper (9.0a) target -- skipping "
+        "_vllm_fa3_C ext_module (CMakeLists.txt would only produce a "
+        "no-op target for it anyway; see comment above).")
 
 setup(
     name="vllm-flash-attn",
