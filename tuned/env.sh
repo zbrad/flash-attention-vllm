@@ -23,25 +23,24 @@ GPU_TUNED_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${GPU_TUNED_SELF_DIR}/devices/${GPU_TUNED_ARG_VARIANT}.conf" || return 1 2>/dev/null || exit 1
 export GPU_TUNED_VARIANT GPU_TUNED_PLATFORM GPU_TUNED_FA2_ARCH GPU_TUNED_HW_LABEL
 
+# shellcheck source=common.sh
+# Vendored from https://github.com/zbrad/tuned-common (pinned commit --
+# see common.sh's own header/sync instructions to update). Provides
+# gpu_tuned_verify_arch/assert_platform/installed_cuda_toolkits, shared
+# verbatim across the fleet instead of hand-copied-and-edited per repo.
+# NOT used for embed_build_info here: kept local on purpose (same
+# reasoning as zbrad/raft's/zbrad/cuvs's/zbrad/faiss's/zbrad/pytorch's
+# tuned/env.sh).
+source "${GPU_TUNED_SELF_DIR}/common.sh" || return 1 2>/dev/null || exit 1
+
 # Fail loudly if this script runs on the wrong host, rather than letting a
 # mismatched build silently produce a wrong-architecture wheel that only
 # surfaces as a confusing failure several steps later.
-if [[ "$(uname -m)" != "${GPU_TUNED_PLATFORM}" ]]; then
-    echo "ERROR: tuned/env.sh: expected platform '${GPU_TUNED_PLATFORM}' for" \
-         "variant '${GPU_TUNED_VARIANT}', but uname -m reports '$(uname -m)'." >&2
-    return 1 2>/dev/null || exit 1
-fi
+gpu_tuned_assert_platform "${GPU_TUNED_PLATFORM}" "${GPU_TUNED_VARIANT}" || return 1 2>/dev/null || exit 1
 
 # --- Resolve CUDA_HOME to the highest installed toolkit when not explicitly set ---
-flash_attn_installed_cuda_toolkits() {
-    local d
-    for d in /usr/local/cuda-[0-9]*; do
-        [ -d "$d" ] && basename "$d" | sed 's/^cuda-//'
-    done | sort -V
-}
-
 if [ -z "${CUDA_HOME:-}" ]; then
-    _fa_highest="$(flash_attn_installed_cuda_toolkits | tail -1)"
+    _fa_highest="$(gpu_tuned_installed_cuda_toolkits | tail -1)"
     if [ -n "$_fa_highest" ]; then
         export CUDA_HOME="/usr/local/cuda-${_fa_highest}"
     else
@@ -62,38 +61,10 @@ export FA2_TUNED_ARCH="${GPU_TUNED_FA2_ARCH}"
 
 echo "[tuned/env] GPU_TUNED_VARIANT=${GPU_TUNED_VARIANT} FA2_TUNED_ARCH=${FA2_TUNED_ARCH} CUDA_HOME=${CUDA_HOME:-<unset>}"
 
-# gpu_tuned_verify_arch <path-to-.so> — confirms a compiled library's
-# embedded cubin(s) are EXACTLY sm_${GPU_TUNED_FA2_ARCH}, via cuobjdump.
-# Same name/signature as the other tuned-builds repos' env.sh equivalents
-# -- this repo previously had none of these empirical checks at all.
-gpu_tuned_verify_arch() {
-    local so_file="$1"
-    if [[ ! -f "${so_file}" ]]; then
-        echo "ERROR: gpu_tuned_verify_arch: no such file: ${so_file}" >&2
-        return 1
-    fi
-    command -v cuobjdump >/dev/null 2>&1 || {
-        echo "ERROR: gpu_tuned_verify_arch: cuobjdump not found on PATH (expected under \$CUDA_HOME/bin)." >&2
-        return 1
-    }
-    local expected_arch found found_count
-    expected_arch="$(echo "${GPU_TUNED_FA2_ARCH}" | tr -d '.')"
-    found="$(cuobjdump --list-elf "${so_file}" 2>/dev/null | grep -oE 'sm_[0-9]+[a-z]?' | sort -u)"
-    if [[ -z "${found}" ]]; then
-        echo "ERROR: gpu_tuned_verify_arch: cuobjdump found no embedded cubins in ${so_file} at all." >&2
-        return 1
-    fi
-    found_count="$(echo "${found}" | wc -l)"
-    if [[ "${found_count}" -ne 1 ]]; then
-        echo "ERROR: ${so_file} embeds MULTIPLE arch targets ($(echo "${found}" | tr '\n' ' ')) -- this is supposed to be a single-arch tuned build, not a fat multi-arch one." >&2
-        return 1
-    fi
-    if [[ "${found}" != "sm_${expected_arch}" ]]; then
-        echo "ERROR: ${so_file} is not built for sm_${expected_arch} (found: ${found})." >&2
-        return 1
-    fi
-    echo "OK: ${so_file} confirmed single-arch ${found} (matches requested sm_${expected_arch})"
-}
+# gpu_tuned_verify_arch now comes from common.sh (sourced above); call
+# sites pass GPU_TUNED_FA2_ARCH explicitly (the shared version takes it
+# as an arg instead of reading a global, since different repos in the
+# fleet name their arch var differently).
 
 # embed_build_info <so_path> <variant> <package> <version> [hw_label] —
 # embeds a greppable build-info string into a custom ELF section

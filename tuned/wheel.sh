@@ -52,7 +52,7 @@ echo ""
 # only FA2 gets this treatment.
 FA2_SO="${REPO_ROOT}/vllm_flash_attn/_vllm_fa2_C.abi3.so"
 if [[ -f "${FA2_SO}" ]]; then
-    gpu_tuned_verify_arch "${FA2_SO}"
+    gpu_tuned_verify_arch "${FA2_SO}" "${GPU_TUNED_FA2_ARCH}"
     embed_build_info "${FA2_SO}" "${GPU_TUNED_VARIANT}" "vllm_flash_attn" "${FLASH_ATTN_LOCAL_VERSION}" "${GPU_TUNED_HW_LABEL}"
 else
     echo "ERROR: ${FA2_SO} not found -- run tuned/build.sh ${GPU_TUNED_VARIANT} first." >&2
