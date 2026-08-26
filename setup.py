@@ -274,7 +274,18 @@ def get_package_version():
         return str(public_version)
 
 
-PYTORCH_VERSION = "2.4.0"
+# Was a hardcoded "2.4.0" -- stale the moment this repo started building
+# against a GB10-tuned torch (2.14.0.dev builds, not stock 2.4.0). That made
+# every wheel's own install_requires declare an unsatisfiable exact pin
+# against whatever tuned torch was actually built/tested with, forcing every
+# build and install site to route around it via --no-deps/
+# --skip-dependency-check (see tuned/wheel.sh's own comment on this) instead
+# of the metadata just being correct. Derive it from the real build-time
+# torch instead: base_version drops any dev/local segment (e.g.
+# "2.14.0.dev20260707+gitc36325c5ba.gb10.cu133" -> "2.14.0"), so this stays
+# accurate across tuned nightly rebuilds without pip treating every new
+# local-version suffix as a different, conflicting torch.
+PYTORCH_VERSION = Version(torch.__version__).base_version
 MAIN_CUDA_VERSION = "12.1"
 
 
@@ -363,6 +374,13 @@ setup(
     ext_modules=ext_modules,
     cmdclass={"build_ext": cmake_build_ext} if len(ext_modules) > 0 else {},
     python_requires=">=3.8",
-    install_requires=[f"torch == {PYTORCH_VERSION}"],
+    # >=, not == -- an exact pin against a dev-build version (even one
+    # correctly derived from the real build, see PYTORCH_VERSION above)
+    # would still refuse a subsequent tuned rebuild with a different
+    # dev/local suffix. This is a compiled ABI-sensitive extension, not a
+    # normal library, so a floor is honest: it flags "too old to work
+    # against" without re-fighting the environment's own tuned torch pin
+    # (constraints-gb10.txt / gpu_tuned_protect_torch_pin) every rebuild.
+    install_requires=[f"torch >= {PYTORCH_VERSION}"],
     setup_requires=["psutil"],
 )
