@@ -15,7 +15,7 @@ PYTHON_EXECUTABLE=${PYTHON_EXECUTABLE:-$(command -v python3)}
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
 
-FA3_SOURCE_OBJECT="hopper/flash_api_stable.cpp.o"
+FA3_SOURCE_OBJECT="hopper/flash_api.cpp.o"
 SKIP_MESSAGE="skipping _vllm_fa3_C build"
 
 configure() {

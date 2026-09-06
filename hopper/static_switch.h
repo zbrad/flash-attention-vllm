@@ -131,7 +131,7 @@
   #define VARLEN_SWITCH(COND, CONST_NAME, ...)                                                   \
   [&] {                                                                                          \
     STD_TORCH_CHECK(COND, "This flash attention build only supports varlen "                     \
-                          "(for build size reasons).");                                          \
+                      "(for build size reasons).");                                              \
     constexpr static bool CONST_NAME = true;                                                     \
     return __VA_ARGS__();                                                                        \
   }()

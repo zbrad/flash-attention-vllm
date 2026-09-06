@@ -13,9 +13,41 @@ from quack import layout_utils
 import flash_attn.cute.utils as utils
 from flash_attn.cute.block_info import BlockInfo
 from flash_attn.cute.seqlen_info import SeqlenInfoQK
+from flash_attn.cute.utils import AuxData
 
 MaskGenFn: TypeAlias = Callable[[int], Uint32]
 MASK_R2P_CHUNK_SIZE: int = 32
+
+
+@cute.jit
+def call_mask_mod(
+    mask_mod: cutlass.Constexpr,
+    batch_idx,
+    head_idx,
+    q_idx,
+    kv_idx,
+    seqlen_info,
+    aux_data: AuxData,
+):
+    # Compatibility shim for pre-aux_scalars mask_mod callables.
+    if const_expr(aux_data.scalars is not None):
+        return mask_mod(
+            batch_idx,
+            head_idx,
+            q_idx,
+            kv_idx,
+            seqlen_info,
+            aux_data.tensors,
+            aux_data.scalars,
+        )
+    return mask_mod(
+        batch_idx,
+        head_idx,
+        q_idx,
+        kv_idx,
+        seqlen_info,
+        aux_data.tensors,
+    )
 
 
 @cute.jit
@@ -155,7 +187,7 @@ class AttentionMask:
         mask_causal: cutlass.Constexpr[bool],
         mask_local: cutlass.Constexpr[bool] = False,
         mask_mod: cutlass.Constexpr[Optional[Callable]] = None,
-        aux_tensors: Optional[list] = None,
+        aux_data: AuxData = AuxData(),
         fastdiv_mods=(None, None),
     ) -> None:
         assert not (mask_causal and mask_local), "mask_causal and mask_local cannot be both True"
@@ -201,7 +233,7 @@ class AttentionMask:
                 and fastdiv_mods[1] is not None
             )
             wrap_aux_indices = const_expr(
-                has_fastdiv and mask_seqlen and const_expr(aux_tensors is not None)
+                has_fastdiv and mask_seqlen and const_expr(aux_data.tensors is not None)
             )
 
             for r in cutlass.range_constexpr(nrow):
@@ -230,13 +262,14 @@ class AttentionMask:
                     head_idx_ssa = utils.scalar_to_ssa(head_idx_for_mod, cutlass.Int32)
                     q_idx_ssa = utils.scalar_to_ssa(row_for_mod, cutlass.Int32)
                     kv_idx_ssa = utils.scalar_to_ssa(col_for_mod, cutlass.Int32)
-                    mask_value = mask_mod(
+                    mask_value = call_mask_mod(
+                        mask_mod,
                         batch_idx_ssa,
                         head_idx_ssa,
                         q_idx_ssa,
                         kv_idx_ssa,
                         self.seqlen_info,
-                        aux_tensors,
+                        aux_data,
                     )
                     cond = cutlass.Boolean(utils.ssa_to_scalar(mask_value))
                     if const_expr(mask_seqlen):
@@ -395,9 +428,7 @@ class AttentionMask:
                                 else col0 - causal_row_offset
                             )
                             row_limit_top = (
-                                causal_row_limit_top
-                                if self.dynamic_causal
-                                else row_limit_top
+                                causal_row_limit_top if self.dynamic_causal else row_limit_top
                             )
                         row_limit_bot = (
                             col0 - causal_row_offset + self.window_size_left
@@ -423,7 +454,7 @@ class AttentionMask:
         mask_mod: cutlass.Constexpr[Callable],
         batch_idx: Int32,
         head_idx: Int32,
-        aux_tensors: Optional[list] = None,
+        aux_data: AuxData = AuxData(),
         fastdiv_mods=(None, None),
         head_divmod=None,
         check_q_boundary: bool = False,
@@ -441,7 +472,7 @@ class AttentionMask:
         batch_idx_ssa = utils.scalar_to_ssa(batch_idx, cutlass.Int32)
         ncol = const_expr(cute.size(tScS_t2r.shape))
 
-        for i in cutlass.range_constexpr(ncol):
+        for i in cutlass.range(ncol, unroll_full=True):
             row_coord = tScS_t2r[i][0] if not self.swap_AB else tScS_t2r[i][1]
             col_coord = tScS_t2r[i][1] if not self.swap_AB else tScS_t2r[i][0]
             global_row = row_coord + m_block * self.tile_m
@@ -456,23 +487,24 @@ class AttentionMask:
                 mask_row = global_row
 
             mask_row_for_mod = mask_row
-            if const_expr(has_fastdiv and aux_tensors is not None):
+            if const_expr(has_fastdiv and aux_data.tensors is not None):
                 if check_q_boundary:
                     _, mask_row_for_mod = divmod(mask_row, fastdiv_mods[0])
             global_col_for_mod = global_col
-            if const_expr(has_fastdiv and mask_seqlen and aux_tensors is not None):
+            if const_expr(has_fastdiv and mask_seqlen and aux_data.tensors is not None):
                 _, global_col_for_mod = divmod(global_col, fastdiv_mods[1])
 
             head_idx_ssa = utils.scalar_to_ssa(head_idx_for_mod, cutlass.Int32)
             mask_row_ssa = utils.scalar_to_ssa(mask_row_for_mod, cutlass.Int32)
             kv_idx_ssa = utils.scalar_to_ssa(global_col_for_mod, cutlass.Int32)
-            mask_value = mask_mod(
+            mask_value = call_mask_mod(
+                mask_mod,
                 batch_idx_ssa,
                 head_idx_ssa,
                 mask_row_ssa,
                 kv_idx_ssa,
                 self.seqlen_info,
-                aux_tensors,
+                aux_data,
             )
             cond = cutlass.Boolean(utils.ssa_to_scalar(mask_value))
             acc_S[i] = acc_S[i] if cond else -Float32.inf
@@ -493,7 +525,7 @@ class AttentionMask:
         batch_idx: Int32,
         head_idx: Int32,
         vec_size: cutlass.Constexpr[int],
-        aux_tensors: Optional[list] = None,
+        aux_data: AuxData = AuxData(),
         fastdiv_mods=(None, None),
         head_divmod=None,
         check_q_boundary: bool = False,
@@ -534,7 +566,7 @@ class AttentionMask:
                 head_idx_for_mod = head_idx
                 mask_row = global_row
             mask_row_for_mod = mask_row
-            if const_expr(has_fastdiv and aux_tensors is not None):
+            if const_expr(has_fastdiv and aux_data.tensors is not None):
                 if check_q_boundary:
                     _, mask_row_for_mod = divmod(mask_row, fastdiv_mods[0])
 
@@ -552,19 +584,20 @@ class AttentionMask:
                 col_j_coord = tScS_t2r[i + j][1] if not self.swap_AB else tScS_t2r[i + j][0]
                 col_j_global = col_j_coord + n_block * self.tile_n
                 col_j_for_mod = col_j_global
-                if const_expr(has_fastdiv and mask_seqlen and aux_tensors is not None):
+                if const_expr(has_fastdiv and mask_seqlen and aux_data.tensors is not None):
                     _, col_j_for_mod = divmod(col_j_global, fastdiv_mods[1])
                 kv_idx_vec[j] = col_j_for_mod
             kv_idx_ssa = kv_idx_vec.load()
 
             # mask_value is already bit-packed by the vectorized mask_mod.
-            mask_value = mask_mod(
+            mask_value = call_mask_mod(
+                mask_mod,
                 batch_idx_ssa_call,
                 head_idx_ssa,
                 mask_row_ssa,
                 kv_idx_ssa,
                 self.seqlen_info,
-                aux_tensors,
+                aux_data,
             )
 
             # For vec_size < 32, multiple mask_mod calls fill one R2P chunk.
@@ -612,7 +645,7 @@ class AttentionMask:
         mask_mod: cutlass.Constexpr[Optional[Callable]] = None,
         batch_idx: Int32 = None,
         head_idx: Int32 = None,
-        aux_tensors: Optional[list] = None,
+        aux_data: AuxData = AuxData(),
         fastdiv_mods=(None, None),
         head_divmod=None,
         vec_size: cutlass.Constexpr[int] = 1,
@@ -675,7 +708,7 @@ class AttentionMask:
                     mask_mod,
                     batch_idx,
                     head_idx,
-                    aux_tensors,
+                    aux_data,
                     fastdiv_mods,
                     head_divmod,
                     check_q_boundary,
@@ -691,13 +724,48 @@ class AttentionMask:
                     batch_idx,
                     head_idx,
                     vec_size,
-                    aux_tensors,
+                    aux_data,
                     fastdiv_mods,
                     head_divmod,
                     check_q_boundary,
                 )
 
         else:  # Causal or local
+            if const_expr(mask_mod is not None):
+                assert vec_size % 32 == 0 or 32 % vec_size == 0, (
+                    "vec_size must divide 32 or be a multiple of 32"
+                )
+                if const_expr(vec_size == 1):
+                    self.apply_mask_mod_sm100_scalar(
+                        acc_S,
+                        tScS_t2r,
+                        m_block,
+                        n_block,
+                        mask_seqlen,
+                        mask_mod,
+                        batch_idx,
+                        head_idx,
+                        aux_data,
+                        fastdiv_mods,
+                        head_divmod,
+                        check_q_boundary,
+                    )
+                else:
+                    self.apply_mask_mod_sm100_vector(
+                        acc_S,
+                        tScS_t2r,
+                        m_block,
+                        n_block,
+                        mask_seqlen,
+                        mask_mod,
+                        batch_idx,
+                        head_idx,
+                        vec_size,
+                        aux_data,
+                        fastdiv_mods,
+                        head_divmod,
+                        check_q_boundary,
+                    )
             causal_row_offset = self.seqlen_k - n_block * self.tile_n - self.seqlen_q
             row_idx = tScS_t2r[0][0] + m_block * self.tile_m
             if const_expr(self.qhead_per_kvhead_packgqa != 1):
@@ -774,7 +842,7 @@ class AttentionMask:
         mask_mod: cutlass.Constexpr[Optional[Callable]] = None,
         batch_idx: Int32 = None,
         head_idx: Int32 = None,
-        aux_tensors: Optional[list] = None,
+        aux_data: AuxData = AuxData(),
         fastdiv_mods=(None, None),
         is_full_block: bool = False,
         check_m_boundary: bool = True,
@@ -832,7 +900,7 @@ class AttentionMask:
                     and fastdiv_mods[1] is not None
                 )
                 wrap_aux_indices = const_expr(
-                    has_fastdiv and mask_seqlen and const_expr(aux_tensors is not None)
+                    has_fastdiv and mask_seqlen and const_expr(aux_data.tensors is not None)
                 )
                 batch_idx_ssa = utils.scalar_to_ssa(batch_idx, cutlass.Int32)
                 head_idx_ssa = utils.scalar_to_ssa(head_idx, cutlass.Int32)
@@ -853,13 +921,14 @@ class AttentionMask:
                     q_idx_ssa = utils.scalar_to_ssa(q_idx_for_mod, cutlass.Int32)
                     kv_idx_ssa = utils.scalar_to_ssa(kv_idx_for_mod, cutlass.Int32)
 
-                    mask_value = mask_mod(
+                    mask_value = call_mask_mod(
+                        mask_mod,
                         batch_idx_ssa,
                         head_idx_ssa,
                         q_idx_ssa,
                         kv_idx_ssa,
                         self.seqlen_info,
-                        aux_tensors,
+                        aux_data,
                     )
                     cond = cutlass.Boolean(utils.ssa_to_scalar(mask_value))
                     acc_S[i] = acc_S[i] if cond else -cutlass.Float32.inf
@@ -1097,6 +1166,7 @@ class Sm100FusedMask:
             has_cu_seqlens_k=False,
             has_seqused_q=False,
             has_seqused_k=False,
+            has_cu_block_idx_offsets=False,
         )
         n_block_min, n_block_max = block_info.get_n_block_min_max(seqlen_info, blk_coord[0])
         return n_block_min, n_block_max - n_block_min
@@ -1140,6 +1210,7 @@ class Sm100FusedMask:
             has_cu_seqlens_k=False,
             has_seqused_q=False,
             has_seqused_k=False,
+            has_cu_block_idx_offsets=False,
         )
         n_block_min, _ = block_info.get_n_block_min_max(seqlen_info, blk_coord[0])
         n_block_min_causal_local_mask = block_info.get_n_block_min_causal_local_mask(
@@ -1652,6 +1723,7 @@ class Sm100FusedMask:
         is_local: cutlass.Constexpr[bool] = False,
         window_size_left: Optional[int] = None,
         window_size_right: Optional[int] = None,
+        apply_residual: cutlass.Constexpr[bool] = True,
         index_transform: cutlass.Constexpr = lambda index_q, index_k: (
             index_q,
             index_k,
@@ -1690,6 +1762,7 @@ class Sm100FusedMask:
                         min_K_index = max(0, index_q + offset - window_size_left)
                         if index_k > max_K_index or index_k < min_K_index:
                             acc_qk[i] = -Float32.inf
-            # Residual mask is always needed for boundary protection.
-            if index_k >= seqlen_k or index_q >= seqlen_q:
-                acc_qk[i] = -Float32.inf
+            if cutlass.const_expr(apply_residual):
+                # Residual mask is needed only when a boundary tile can be partial.
+                if index_k >= seqlen_k or index_q >= seqlen_q:
+                    acc_qk[i] = -Float32.inf
