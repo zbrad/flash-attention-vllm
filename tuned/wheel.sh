@@ -76,7 +76,7 @@ echo "Built wheel: $(basename "${WHEEL}") ($(du -sh "${WHEEL}" | awk '{print $1}
 # Extract the actual package version from the built wheel filename rather
 # than re-deriving it a second time (avoids any drift between what
 # setup.py actually computed and what this script assumes it computed).
-WHEEL_VERSION="$(basename "${WHEEL}" | sed -E 's/^vllm_flash_attn-([^-]+)-.*/\1/')"
+WHEEL_VERSION="$(gpu_tuned_wheel_version "${WHEEL}" vllm_flash_attn)" || exit 1
 # WHEEL_VERSION includes the "+FLASH_ATTN_LOCAL_VERSION" local-version
 # segment (e.g. "2.7.2.post1+gb10.cu133") -- strip it for the release tag,
 # which already appends -<variant>-cu<NNN> separately below; keeping both
