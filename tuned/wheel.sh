@@ -91,8 +91,12 @@ WHEEL_VERSION="$(gpu_tuned_wheel_version "${WHEEL}" vllm_flash_attn)" || exit 1
 # drop tuning-vN from the tag while it stayed visible in the title below.
 # A literal "+" in a git tag is fine (needs %2B only in URLs that link to
 # it, not in the tag itself or `gh release create`'s argument).
+# Friendly title only -- RELEASE_TAG stays the exact WHEEL_VERSION.
+GIT_SHA="$(git rev-parse --short HEAD)"
+WHEEL_BASE_VERSION="${WHEEL_VERSION%%+*}"
+
 RELEASE_TAG="v${WHEEL_VERSION}"
-RELEASE_TITLE="vllm_flash_attn ${WHEEL_VERSION} — ${GPU_TUNED_HW_LABEL} wheel"
+RELEASE_TITLE="vllm_flash_attn ${WHEEL_BASE_VERSION} — ${GPU_TUNED_VARIANT} tuning-v${TUNED_COMMIT_COUNT} (cu${CUDA_VERSION_COMPACT}, ${GIT_SHA}) — ${GPU_TUNED_HW_LABEL} wheel"
 
 echo ""
 echo "Publishing wheel to GitHub release ${RELEASE_TAG}..."
