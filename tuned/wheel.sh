@@ -54,21 +54,7 @@ echo "=========================================="
 echo "FLASH_ATTN_LOCAL_VERSION: ${FLASH_ATTN_LOCAL_VERSION}"
 echo ""
 
-# _vllm_fa2_C.abi3.so is where FA2_TUNED_ARCH's actual device code lands
-# -- verify + stamp it before packaging, same discipline as the other
-# tuned-builds repos' wheel.sh. FA3 (_vllm_fa3_C.abi3.so) is a no-op
-# target on non-Hopper (gb10/rtx40/rtx50), so it's never built here --
-# only FA2 gets this treatment.
-FA2_SO="${REPO_ROOT}/vllm_flash_attn/_vllm_fa2_C.abi3.so"
-if [[ -f "${FA2_SO}" ]]; then
-    gpu_tuned_verify_arch "${FA2_SO}" "${GPU_TUNED_FA2_ARCH}"
-    embed_build_info "${FA2_SO}" "${GPU_TUNED_VARIANT}" "vllm_flash_attn" "${FLASH_ATTN_LOCAL_VERSION}" "${GPU_TUNED_HW_LABEL}"
-else
-    echo "ERROR: ${FA2_SO} not found -- run tuned/build.sh ${GPU_TUNED_VARIANT} first." >&2
-    exit 1
-fi
-
-pip install --upgrade build
+pip install --upgrade build wheel
 rm -rf "${REPO_ROOT}/dist"
 # --skip-dependency-check: setup.py's install_requires pins
 # torch=={PYTORCH_VERSION} (whatever stock torch existed upstream when
@@ -86,6 +72,31 @@ echo "Built wheel: $(basename "${WHEEL}") ($(du -sh "${WHEEL}" | awk '{print $1}
 # than re-deriving it a second time (avoids any drift between what
 # setup.py actually computed and what this script assumes it computed).
 WHEEL_VERSION="$(gpu_tuned_wheel_version "${WHEEL}" vllm_flash_attn)" || exit 1
+
+# _vllm_fa2_C.abi3.so is where FA2_TUNED_ARCH's actual device code lands
+# -- verify + stamp it here, on the wheel's OWN contents, not a pre-build
+# copy: a separate packaging invocation (python -m build) may
+# rebuild/relink rather than reuse an already-stamped file byte-for-byte
+# -- confirmed for pytorch's equivalent build this session (a test marker
+# stamped before the build was completely absent afterward; see
+# gpu_tuned_verify_build_info's header comment). FA3 (_vllm_fa3_C.abi3.so)
+# is a no-op target on non-Hopper (gb10/rtx40/rtx50), so it's never built
+# here -- only FA2 gets this treatment. Unpack -> stamp -> repack
+# regenerates RECORD correctly, unlike a raw zip edit.
+echo "Stamping build-info into the wheel's own _vllm_fa2_C.abi3.so"
+UNPACK_DIR="$(mktemp -d)"
+python3 -m wheel unpack "${WHEEL}" --dest "${UNPACK_DIR}"
+WHEEL_SO="$(find "${UNPACK_DIR}" -name '_vllm_fa2_C.abi3.so' | head -1)"
+[[ -z "${WHEEL_SO}" ]] && { echo "ERROR: _vllm_fa2_C.abi3.so not found inside ${WHEEL}." >&2; exit 1; }
+gpu_tuned_verify_arch "${WHEEL_SO}" "${GPU_TUNED_FA2_ARCH}"
+embed_build_info "${WHEEL_SO}" "${GPU_TUNED_VARIANT}" "vllm_flash_attn" "${WHEEL_VERSION}" "${GPU_TUNED_HW_LABEL}"
+gpu_tuned_verify_build_info "${WHEEL_SO}" "vllm_flash_attn" "${WHEEL_VERSION}"
+rm -f "${WHEEL}"
+UNPACKED_CONTENT_DIR="$(find "${UNPACK_DIR}" -maxdepth 1 -mindepth 1 -type d)"
+python3 -m wheel pack "${UNPACKED_CONTENT_DIR}" --dest-dir "${REPO_ROOT}/dist"
+rm -rf "${UNPACK_DIR}"
+WHEEL="$(ls "${REPO_ROOT}"/dist/vllm_flash_attn-*.whl 2>/dev/null | head -1)"
+echo "Re-packed with build-info stamp: $(basename "${WHEEL}")"
 # WHEEL_VERSION already includes the full "+FLASH_ATTN_LOCAL_VERSION" local
 # segment (variant, cuda tag, and now tuning-vN) -- use it directly rather
 # than stripping and re-appending only part of it, which would silently
