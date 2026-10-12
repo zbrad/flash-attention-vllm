@@ -1,0 +1,7 @@
+# tuned/torch.pins -- which zbrad/pytorch release this package is built and tested against, per
+# variant and toolkit. This is an ABI dependency (the compiled _vllm_fa*_C extensions link
+# torch's C++ API), not a nicety.
+#   <variant> <toolkit id> <wheel URL>
+# tuned/build.sh downloads the wheel into build/cu<ver>/wheels/, installs exactly it into the
+# build venv, and refuses to compile if the installed torch is any other version.
+gb10 cu134 https://github.com/zbrad/pytorch/releases/download/v2.15.0%2Bgb10.cu134.20261012/torch-2.15.0%2Bgb10.cu134.20261012-cp314-cp314-linux_aarch64.whl
