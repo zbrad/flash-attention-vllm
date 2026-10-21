@@ -1,7 +1,13 @@
 #!/bin/bash
-# tuned/build.sh <variant> — build/install vllm_flash_attn from source for a single GPU variant
-# (gb10/rtx40/rtx50) only, single-arch, into the per-toolkit tree tuned/build/cu<ver>/ (see
-# env.sh): venv/, wheels/ (the pinned torch), ccache/, dist/, timing.tsv.
+# tuned/build.sh <variant> — build the vllm_flash_attn wheel for one GPU variant (gb10/rtx40/rtx50) and one CUDA
+# toolkit, single-arch. It prepares the build venv in the per-toolkit tree tuned/build/<cuda-tag>/ (see env.sh),
+# installs the pinned torch and the build tools, then makes the unstamped wheel with tuned/wheel.sh. The compile
+# is the long step.
+#
+#   CUDA_TAG=cu134 bash tuned/build.sh gb10     (or CUDA_VER=13.4)
+#
+# Stage order (docs/ARCHITECTURE.md B3): build.sh -> full_test.sh -> package.sh -> smoke_test.sh ->
+# (review and commit the release notes) -> release.sh -> publish.sh.
 #
 # flash-attention builds AGAINST an existing torch, so the torch is part of the build's identity:
 # tuned/torch.pins names the zbrad/pytorch release for this variant and toolkit, this script
@@ -10,10 +16,10 @@
 #
 # Compiler caching comes from upstream's setup.py, which hands ccache to CMake as the C++ and
 # CUDA compiler launcher when it is on PATH; env.sh points CCACHE_DIR at the per-toolkit cache.
-# Per-target timings are read back from ninja's own log into tuned/build/cu<ver>/timing.tsv.
+# wheel.sh reads per-target timings back from ninja's own log into tuned/build/<cuda-tag>/timing.tsv.
 set -euo pipefail
 
-GPU_TUNED_ARG_VARIANT="$1"
+GPU_TUNED_ARG_VARIANT="${1:?usage: tuned/build.sh <variant>}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
@@ -21,7 +27,6 @@ cd "${REPO_ROOT}"
 source "${REPO_ROOT}/tuned/env.sh" "${GPU_TUNED_ARG_VARIANT}"
 
 command -v python3 &>/dev/null || { echo "ERROR: python3 not found on PATH." >&2; exit 1; }
-[[ -n "${GPU_TUNED_BUILD_ROOT:-}" ]] || { echo "ERROR: CUDA_HOME did not resolve to a /usr/local/cuda-X.Y directory; no build tree." >&2; exit 1; }
 
 VENV_DIR="${GPU_TUNED_VENV_DIR}"
 if [[ "${GPU_TUNED_CLEAN_VENV:-}" == "1" && -d "${VENV_DIR}" ]]; then
@@ -46,7 +51,7 @@ echo "=========================================="
 echo "Building vllm_flash_attn for ${GPU_TUNED_HW_LABEL} only"
 echo "=========================================="
 echo "FA2_TUNED_ARCH: ${FA2_TUNED_ARCH}"
-echo "CUDA_HOME:      ${CUDA_HOME:-<unset>}"
+echo "Toolkit:        ${CUDA_TAG} (${CUDA_HOME})"
 echo "Build tree:     ${GPU_TUNED_BUILD_ROOT}"
 echo "ccache:         ${CCACHE_DIR} (max ${CCACHE_MAXSIZE})"
 echo "Python:         $(python3 --version)"
@@ -74,13 +79,13 @@ if [[ -n "${GPU_TUNED_TORCH_URL}" ]]; then
     }
     # The extensions are compiled with this toolkit, so torch must be built for the same CUDA.
     TORCH_CUDA="$(python3 -c 'import torch; print(torch.version.cuda)')"
-    [[ "${TORCH_CUDA//./}" == "${CUDA_VERSION_COMPACT}" ]] || {
-        echo "ERROR: torch reports CUDA ${TORCH_CUDA} but this build uses CUDA_HOME=${CUDA_HOME} (cu${CUDA_VERSION_COMPACT})." >&2
+    [[ "${TORCH_CUDA}" == "${CUDA_VER}" ]] || {
+        echo "ERROR: torch reports CUDA ${TORCH_CUDA} but this build uses ${CUDA_TAG} (CUDA ${CUDA_VER})." >&2
         exit 1
     }
 elif ! python3 -c "import torch" &>/dev/null; then
     if [[ "${GPU_TUNED_VARIANT}" == "gb10" ]]; then
-        echo "ERROR: gb10 has no torch pin for cu${CUDA_VERSION_COMPACT} in tuned/torch.pins, no torch is installed in" >&2
+        echo "ERROR: gb10 has no torch pin for ${CUDA_TAG} in tuned/torch.pins, no torch is installed in" >&2
         echo "       ${VENV_DIR}, and there is no official upstream aarch64/sm_121 torch wheel." >&2
         exit 1
     fi
@@ -97,50 +102,17 @@ for node in ast.walk(tree):
 fi
 python3 -c "import torch; print(f'Using torch {torch.__version__} (CUDA {torch.version.cuda})')"
 
-echo "Installing other build-time requirements (cmake, ninja, packaging, setuptools, wheel, jinja2)..."
-pip install "cmake>=3.26" ninja packaging "setuptools>=49.4.0" wheel jinja2
-
-# Where ninja logs this build's targets, and how much of the log predates it. The log accumulates
-# across runs, so only what is appended after this point is timed.
-NINJA_LOG="${GPU_TUNED_BUILD_TEMP}/.ninja_log"
-NINJA_OFFSET=0
-[[ -n "${NINJA_LOG}" && -f "${NINJA_LOG}" ]] && NINJA_OFFSET="$(wc -c < "${NINJA_LOG}")"
-BUILD_T0="${EPOCHSECONDS}"
-
-echo "Building vllm_flash_attn (this will take a long time)..."
-# The compile runs through setup.py directly, NOT `pip install -e .`: pip builds in a temporary
-# directory it deletes afterwards, which leaves no ninja log to time and gives ccache a different
-# path on every run (so it could never hit). build_ext --inplace --build-temp uses the fixed
-# tuned/build/cu<ver>/temp/ tree, and puts the extensions next to the sources, so the package
-# imports from the repo without an install. tuned/wheel.sh then builds the wheel in the SAME tree
-# and finds the objects already compiled.
-python3 setup.py build_ext --inplace --build-temp "${GPU_TUNED_BUILD_TEMP}"
-BUILD_WALL=$(( EPOCHSECONDS - BUILD_T0 ))
+echo "Installing other build-time requirements (build, cmake, ninja, packaging, setuptools, wheel, jinja2)..."
+pip install build "cmake>=3.26" ninja packaging "setuptools>=49.4.0" wheel jinja2
 
 echo ""
-echo "Build timing (wall ${BUILD_WALL}s):"
-if [[ -f "${NINJA_LOG}" ]] && gpu_tuned_ninja_timing "${NINJA_LOG}" "${NINJA_OFFSET}" "${GPU_TUNED_BUILD_ROOT}/timing.tsv" "CMakeFiles/"; then
-    echo "  per-target timings: ${GPU_TUNED_BUILD_ROOT}/timing.tsv"
-else
-    echo "  (no per-target timings: nothing was rebuilt, or ninja logged nothing)"
-fi
-if command -v ccache >/dev/null 2>&1; then
-    echo "ccache: $(ccache -s | grep -E 'Hits:|Misses:' | head -2 | tr -s ' ' | tr '\n' ' ')"
-fi
-
-echo ""
-echo "Smoke test: import vllm_flash_attn from this checkout, confirm it loads..."
-PYTHONPATH="${REPO_ROOT}" python3 - <<'PYEOF'
-import torch
-import vllm_flash_attn
-
-print(f"vllm_flash_attn imported OK from {vllm_flash_attn.__file__}")
-assert torch.cuda.is_available(), "CUDA device not available -- cannot exercise a real kernel call here"
-PYEOF
+bash "${REPO_ROOT}/tuned/wheel.sh" "${GPU_TUNED_VARIANT}"
 
 echo ""
 echo "=========================================="
 echo "Build complete (${GPU_TUNED_HW_LABEL})."
 echo "=========================================="
-echo "Venv: ${VENV_DIR}"
-echo "Next: bash tuned/wheel.sh ${GPU_TUNED_VARIANT}"
+echo "Venv:         ${VENV_DIR}"
+echo "Label:        $(cat "${GPU_TUNED_BUILD_ROOT}/release-label")"
+echo "Build commit: $(cat "${GPU_TUNED_BUILD_ROOT}/build-commit")"
+echo "Next: CUDA_TAG=${CUDA_TAG} bash tuned/full_test.sh ${GPU_TUNED_VARIANT}"
