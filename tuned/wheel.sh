@@ -47,7 +47,7 @@ gpu_tuned_verify_venv "${GPU_TUNED_VENV_DIR}" "${REPO_ROOT}"
 # shellcheck source=/dev/null
 source "${GPU_TUNED_VENV_DIR}/bin/activate"
 # A CMake tree configured for another toolkit or another venv's Python would silently keep them.
-gpu_tuned_assert_cmake_cache_consistent
+fa_vllm_assert_build_tree
 
 # setup.py's get_version() reads __version__ from vllm_flash_attn/__init__.py (a static string that
 # only moves when upstream bumps it) and appends "+$FLASH_ATTN_LOCAL_VERSION" when that is set.

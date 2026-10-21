@@ -107,10 +107,15 @@ if [ -f "${GPU_TUNED_SELF_DIR}/torch.pins" ]; then
 fi
 export GPU_TUNED_TORCH_URL GPU_TUNED_TORCH_VERSION
 
-# gpu_tuned_assert_cmake_cache_consistent: fail if the existing CMake tree under build/temp.* was
-# configured for another toolkit or another Python (it would silently keep the old torch/CUDA).
-gpu_tuned_assert_cmake_cache_consistent() {
-    local cache cached legacy
+# The CMake source tree is the repo root (CMakeLists.txt), where the shared cache check defaults to cpp/.
+export GPU_TUNED_CMAKE_SOURCE_DIR="${GPU_TUNED_REPO_ROOT}"
+
+# fa_vllm_assert_build_tree: fail if the CMake tree this build would compile into was configured for another
+# toolkit, source tree or Python (it would silently keep the old torch/CUDA), or if the old in-repo tree exists.
+# The toolkit and source-tree checks are the shared gpu_tuned_assert_cmake_cache_consistent; the venv-Python
+# and old-layout checks are this repo's own.
+fa_vllm_assert_build_tree() {
+    local cached legacy cache="${GPU_TUNED_BUILD_TEMP}/CMakeCache.txt"
     # The old layout's tree (setup.py's default location) would be compiled into by nothing and
     # timed by nothing: refuse it rather than let two trees drift.
     for legacy in "${GPU_TUNED_SELF_DIR}"/../build/temp.*/CMakeCache.txt; do
@@ -118,19 +123,13 @@ gpu_tuned_assert_cmake_cache_consistent() {
         echo "ERROR: ${legacy} is the old in-repo CMake tree; builds now use ${GPU_TUNED_BUILD_TEMP}. Remove it: rm -rf $(dirname "${legacy}")" >&2
         return 1
     done
-    for cache in "${GPU_TUNED_BUILD_TEMP}/CMakeCache.txt"; do
-        [ -f "${cache}" ] || continue
-        cached="$(sed -n 's/^CMAKE_CUDA_COMPILER:FILEPATH=//p' "${cache}" | head -1)"
-        if [ -n "${cached}" ] && [ "${cached}" != "${CUDA_HOME}/bin/nvcc" ]; then
-            echo "ERROR: ${cache} was configured with ${cached}, but CUDA_HOME=${CUDA_HOME}. Remove that tree first: rm -rf $(dirname "${cache}")" >&2
-            return 1
-        fi
-        cached="$(sed -n 's/^Python_EXECUTABLE:[A-Z]*=//p' "${cache}" | head -1)"
-        if [ -n "${cached}" ] && [ -n "${GPU_TUNED_VENV_DIR:-}" ] && [[ "${cached}" != "${GPU_TUNED_VENV_DIR}"/* ]]; then
-            echo "ERROR: ${cache} was configured with Python ${cached}, not this build's venv ${GPU_TUNED_VENV_DIR}. Remove that tree first: rm -rf $(dirname "${cache}")" >&2
-            return 1
-        fi
-    done
+    gpu_tuned_assert_cmake_cache_consistent "${GPU_TUNED_BUILD_TEMP}" || return 1
+    [ -f "${cache}" ] || return 0
+    cached="$(sed -n 's/^Python_EXECUTABLE:[A-Z]*=//p' "${cache}" | head -1)"
+    if [ -n "${cached}" ] && [ -n "${GPU_TUNED_VENV_DIR:-}" ] && [[ "${cached}" != "${GPU_TUNED_VENV_DIR}"/* ]]; then
+        echo "ERROR: ${cache} was configured with Python ${cached}, not this build's venv ${GPU_TUNED_VENV_DIR}. Remove that tree first: rm -rf ${GPU_TUNED_BUILD_TEMP}" >&2
+        return 1
+    fi
 }
 
 export CUDA_ARCHS="${GPU_TUNED_FA2_ARCH}"

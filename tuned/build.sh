@@ -45,7 +45,7 @@ fi
 source "${VENV_DIR}/bin/activate"
 
 # A CMake tree configured for another toolkit or another venv's Python would silently keep them.
-gpu_tuned_assert_cmake_cache_consistent
+fa_vllm_assert_build_tree
 
 echo "=========================================="
 echo "Building vllm_flash_attn for ${GPU_TUNED_HW_LABEL} only"
