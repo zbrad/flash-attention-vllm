@@ -122,7 +122,9 @@ print("\n".join(bad) if bad else "clean" + (" (byte-identical copies of: " + ", 
     # so only its base version is compared.
     SMOKE_PIN="" SMOKE_LINKS=""
     [[ -z "${GPU_TUNED_TORCH_VERSION}" ]] || { SMOKE_PIN="torch==${GPU_TUNED_TORCH_VERSION}"; SMOKE_LINKS="${GPU_TUNED_WHEELS_DIR}"; }
-    if GPU_TUNED_SMOKE_MODULE_VERSION=base GPU_TUNED_SMOKE_PIN="${SMOKE_PIN}" GPU_TUNED_SMOKE_EXTRA_LINKS="${SMOKE_LINKS}" \
+    # gpu_tuned_smoke_wheel builds its venv and checks the wheel's python tag with the python3 on PATH; the build
+    # venv's comes first, as it did when wheel.sh ran this with the venv activated.
+    if PATH="${GPU_TUNED_VENV_DIR}/bin:${PATH}" GPU_TUNED_SMOKE_MODULE_VERSION=base GPU_TUNED_SMOKE_PIN="${SMOKE_PIN}" GPU_TUNED_SMOKE_EXTRA_LINKS="${SMOKE_LINKS}" \
         gpu_tuned_smoke_wheel "${WHEEL}" vllm_flash_attn vllm_flash_attn; then
         ok "the wheel installs and loads in a clean venv with the pinned torch"
     else
