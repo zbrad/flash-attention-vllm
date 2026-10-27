@@ -28,6 +28,8 @@ source "${REPO_ROOT}/tuned/env.sh" "${GPU_TUNED_ARG_VARIANT}"
 
 [[ -d "${GPU_TUNED_VENV_DIR}" ]] || { echo "ERROR: ${GPU_TUNED_VENV_DIR} not found. Run CUDA_TAG=${CUDA_TAG} bash tuned/build.sh ${GPU_TUNED_VARIANT} first." >&2; exit 1; }
 gpu_tuned_verify_venv "${GPU_TUNED_VENV_DIR}" "${REPO_ROOT}"
+# The wheel was built in this venv: its setuptools must meet the common minimum (H10, tuned-common).
+gpu_tuned_check_venv_setuptools "${GPU_TUNED_VENV_DIR}" || exit 1
 # shellcheck source=/dev/null
 source "${GPU_TUNED_VENV_DIR}/bin/activate"
 
