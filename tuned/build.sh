@@ -104,6 +104,8 @@ python3 -c "import torch; print(f'Using torch {torch.__version__} (CUDA {torch.v
 
 echo "Installing other build-time requirements (build, cmake, ninja, packaging, setuptools, wheel, jinja2)..."
 pip install build "cmake>=3.26" ninja packaging "setuptools>=49.4.0" wheel jinja2
+# The current setuptools, installed last so nothing above can hold it back (C8, tuned-common).
+gpu_tuned_install_setuptools || exit 1
 
 echo ""
 bash "${REPO_ROOT}/tuned/wheel.sh" "${GPU_TUNED_VARIANT}"
