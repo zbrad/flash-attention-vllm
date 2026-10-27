@@ -95,6 +95,9 @@ STOCK_RE='^lib(c10|c10_cuda|torch|torch_cpu|torch_cuda|torch_cuda_linalg|torch_p
 leaks="$(find "${UNPACKED}" -type f -name '*.so*' -exec basename {} \; | grep -E "${STOCK_RE}" || true)"
 [[ -z "${leaks}" ]] || { echo "ERROR: the wheel ships shared objects under stock torch names: ${leaks}" >&2; exit 1; }
 
+# Dependency audit of the wheel's resolved runtime deps (H9, tuned-common): a vulnerable version with a fix fails.
+gpu_tuned_audit_deps "${BUILT}" "${GPU_TUNED_BUILD_ROOT}/dependency-audit.log" || { echo "ERROR: dependency audit failed (see above and ${GPU_TUNED_BUILD_ROOT}/dependency-audit.log)." >&2; exit 1; }
+
 # Exactly one extension is stamped, and it is the only one in the wheel: an FA3 or other target appearing is a
 # decision for the owner, not something to stamp or ship unnoticed.
 mapfile -t ALL_LIBS < <(find "${UNPACKED}" -type f -name '*.so*')
