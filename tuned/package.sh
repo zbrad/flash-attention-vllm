@@ -98,7 +98,9 @@ leaks="$(find "${UNPACKED}" -type f -name '*.so*' -exec basename {} \; | grep -E
 [[ -z "${leaks}" ]] || { echo "ERROR: the wheel ships shared objects under stock torch names: ${leaks}" >&2; exit 1; }
 
 # Dependency audit of the wheel's resolved runtime deps (H9, tuned-common): a vulnerable version with a fix fails.
-gpu_tuned_audit_deps "${BUILT}" "${GPU_TUNED_BUILD_ROOT}/dependency-audit.log" || { echo "ERROR: dependency audit failed (see above and ${GPU_TUNED_BUILD_ROOT}/dependency-audit.log)." >&2; exit 1; }
+# The wheel requires torch>=2.15.0, which only the pinned tuned torch satisfies (PyPI stops at 2.14), so the pin is given
+# to the resolver as a direct URL; it is listed as "not audited (direct URL)" and the rest of the dependencies are audited.
+gpu_tuned_audit_deps "${BUILT}" "${GPU_TUNED_BUILD_ROOT}/dependency-audit.log" "${GPU_TUNED_TORCH_URL}" || { echo "ERROR: dependency audit failed (see above and ${GPU_TUNED_BUILD_ROOT}/dependency-audit.log)." >&2; exit 1; }
 
 # Exactly one extension is stamped, and it is the only one in the wheel: an FA3 or other target appearing is a
 # decision for the owner, not something to stamp or ship unnoticed.
