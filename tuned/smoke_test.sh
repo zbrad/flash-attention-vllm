@@ -89,7 +89,8 @@ PY
     fi
 
     # Mapped libraries: a process that imports the extension maps the venv's libtorch/libc10, from one file each.
-    maps="$(cd "${WORK}" && "${PY}" -I -c '
+    # -W ignore: torch warns "Failed to initialize NumPy" when numpy is absent, and a warning line ahead of the verdict would fail the match below.
+    maps="$(cd "${WORK}" && "${PY}" -W ignore -I -c '
 import collections, hashlib, os, sys
 import torch
 from vllm_flash_attn import _vllm_fa2_C
