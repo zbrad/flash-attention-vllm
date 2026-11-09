@@ -88,37 +88,15 @@ PY
         fail "${SO_MEMBER}: build-info stamp does not read back as this release"
     fi
 
-    # Mapped libraries: a process that imports the extension maps the venv's libtorch/libc10, from one file each.
-    # -W ignore: torch warns "Failed to initialize NumPy" when numpy is absent, and a warning line ahead of the verdict would fail the match below.
-    maps="$(cd "${WORK}" && "${PY}" -W ignore -I -c '
-import collections, hashlib, os, sys
-import torch
-from vllm_flash_attn import _vllm_fa2_C
-torch.zeros(1, device="cuda")
-by = collections.defaultdict(set)
-for line in open("/proc/self/maps"):
-    p = line.split()[-1] if line.split() else ""
-    if ".so" in p and p.startswith("/"):
-        by[os.path.basename(p).split(".so")[0]].add(os.path.realpath(p))
-# A name mapped from two files is a failure unless the files are byte-identical (the pip nvidia-cuda-runtime wheel and the
-# toolkit ship the same libcudart). Python extension modules may share a file name across packages.
-def digest(path):
-    return hashlib.sha256(open(path, "rb").read()).hexdigest()
-# WSL2 maps libcuda twice: the /usr/lib/wsl/lib/ loader stub, which loads the WSL libdxcore.so and then the
-# driver-store file (/usr/lib/wsl/drivers/<inf dir>/). One such pair, with libdxcore mapped from /usr/lib/wsl/lib/,
-# and nothing else, counts as one library (same rule as zbrad/pytorch tuned/smoke_test.sh).
-def wsl_pair(v):
-    dx = by.get("libdxcore", set())
-    return (len(v) == 2 and sum(x.startswith("/usr/lib/wsl/lib/") for x in v) == 1
-            and sum(x.startswith("/usr/lib/wsl/drivers/") for x in v) == 1
-            and len(dx) == 1 and next(iter(dx)).startswith("/usr/lib/wsl/lib/"))
-bad = [f"{k}: {sorted(v)}" for k, v in by.items() if len(v) > 1 and ".cpython-" not in k and len({digest(x) for x in v}) > 1 and not wsl_pair(v)]
-bad += [f"{k} from {sorted(v)}" for k, v in by.items() if k.startswith(("libtorch", "libc10", "_vllm_fa2_C")) and not all(x.startswith(sys.prefix) for x in v)]
-same = [k for k, v in by.items() if len(v) > 1 and ".cpython-" not in k and len({digest(x) for x in v}) == 1]
-print("\n".join(bad) if bad else "clean" + (" (byte-identical copies of: " + ", ".join(sorted(same)) + ")" if same else ""))
-' 2>&1 | tail -5)"
-    [[ "${maps}" == clean* ]] && ok "every mapped libtorch/libc10/_vllm_fa2_C library is the venv's, and no library name maps from two different files ${maps#clean}" \
-        || fail "library identity: ${maps}"
+    # Mapped libraries: a process that imports the extension maps the venv's libtorch/libc10/_vllm_fa2_C, and each library
+    # from one file (gpu_tuned_check_mapped_libs in tuned-common; allow-identical is this repo's rule: byte-identical
+    # copies such as the pip and toolkit libcudart pass, python extension modules are not compared).
+    if maps="$(gpu_tuned_check_mapped_libs "${PY}" allow-identical libtorch,libc10,_vllm_fa2_C \
+        'import torch; from vllm_flash_attn import _vllm_fa2_C; torch.zeros(1, device="cuda")')"; then
+        ok "every mapped libtorch/libc10/_vllm_fa2_C library is the venv's, and no library name maps from two different files ${maps#clean}"
+    else
+        fail "library identity: ${maps}"
+    fi
     gpu_tuned_verify_toolkit_libs "${SITE_DIR}/${SO_MEMBER}" && ok "toolkit libraries resolve under ${CUDA_HOME}" \
         || fail "toolkit libraries do not resolve under ${CUDA_HOME}"
 
