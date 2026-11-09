@@ -104,7 +104,15 @@ for line in open("/proc/self/maps"):
 # toolkit ship the same libcudart). Python extension modules may share a file name across packages.
 def digest(path):
     return hashlib.sha256(open(path, "rb").read()).hexdigest()
-bad = [f"{k}: {sorted(v)}" for k, v in by.items() if len(v) > 1 and ".cpython-" not in k and len({digest(x) for x in v}) > 1]
+# WSL2 maps libcuda twice: the /usr/lib/wsl/lib/ loader stub, which loads the WSL libdxcore.so and then the
+# driver-store file (/usr/lib/wsl/drivers/<inf dir>/). One such pair, with libdxcore mapped from /usr/lib/wsl/lib/,
+# and nothing else, counts as one library (same rule as zbrad/pytorch tuned/smoke_test.sh).
+def wsl_pair(v):
+    dx = by.get("libdxcore", set())
+    return (len(v) == 2 and sum(x.startswith("/usr/lib/wsl/lib/") for x in v) == 1
+            and sum(x.startswith("/usr/lib/wsl/drivers/") for x in v) == 1
+            and len(dx) == 1 and next(iter(dx)).startswith("/usr/lib/wsl/lib/"))
+bad = [f"{k}: {sorted(v)}" for k, v in by.items() if len(v) > 1 and ".cpython-" not in k and len({digest(x) for x in v}) > 1 and not wsl_pair(v)]
 bad += [f"{k} from {sorted(v)}" for k, v in by.items() if k.startswith(("libtorch", "libc10", "_vllm_fa2_C")) and not all(x.startswith(sys.prefix) for x in v)]
 same = [k for k, v in by.items() if len(v) > 1 and ".cpython-" not in k and len({digest(x) for x in v}) == 1]
 print("\n".join(bad) if bad else "clean" + (" (byte-identical copies of: " + ", ".join(sorted(same)) + ")" if same else ""))
