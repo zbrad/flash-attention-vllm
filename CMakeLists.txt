@@ -128,6 +128,21 @@ list(APPEND VLLM_FA_GPU_FLAGS -DCUTLASS_ENABLE_DIRECT_CUDA_DRIVER_CALL=1)
 # Replace instead of appending, nvcc doesn't like duplicate -O flags.
 string(REPLACE "-O2" "-O3" CMAKE_CUDA_FLAGS_RELWITHDEBINFO "${CMAKE_CUDA_FLAGS_RELWITHDEBINFO}")
 
+# MSVC (native Windows build, zbrad windows-dev): a conforming __cplusplus (CUTLASS gates its C++17 paths, e.g.
+# platform::is_unsigned_v, on it; MSVC reports 199711L by default) and the standard preprocessor (CUDA 13's CCCL
+# headers reject the traditional one), for the host compiler of both .cpp and .cu sources, as PyTorch's and
+# CUTLASS's own CMakeLists.txt do under MSVC. _USE_MATH_DEFINES makes MSVC's math headers define M_LOG2E.
+# FA2 passes no CUtensorMap by value, so /Zc:__cplusplus does not trigger the nvcc C2719 bug here.
+if(MSVC)
+  add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/Zc:__cplusplus>" "$<$<COMPILE_LANGUAGE:CXX>:/Zc:preprocessor>")
+  list(APPEND VLLM_FA_GPU_FLAGS -Xcompiler=/Zc:__cplusplus -Xcompiler=/Zc:preprocessor)
+  add_compile_definitions(_USE_MATH_DEFINES)
+  # torch's Caffe2/public/cuda.cmake adds `--Werror cross-execution-space-call` under MSVC only, which turns
+  # CUTLASS's CUTLASS_HOST_DEVICE memsetDevice() (it calls the host-only virtual memsetDeviceImpl) into an error
+  # (cutlass/cuda_host_adapter.hpp). Linux builds never see that flag; drop it here instead of patching CUTLASS.
+  string(REPLACE " --Werror cross-execution-space-call" "" CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS}")
+endif()
+
 #
 # _C extension
 #
@@ -211,6 +226,15 @@ if (FA2_ENABLED)
     # so the host .cpp sources would compile as C++17 and fail against PyTorch
     # nightly's ATen headers, which now require C++20.
     set_target_properties(_vllm_fa2_C PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+    # MSVC: compile the .cu sources as C++17. torch's Caffe2/public/cuda.cmake sets CMAKE_CUDA_STANDARD to
+    # CMAKE_CXX_STANDARD (20), and in C++20 mode MSVC (19.44 and 19.50 both) rejects this CUTLASS's CuTe in the
+    # host pass (cute/stride.hpp(299): C3545 'Ints': parameter pack expects a non-type template argument). The same
+    # nvcc command with -std=c++17 compiles cleanly (D:\ptb\fa-onefile-variants.ps1, 2026-11-10). The host .cpp
+    # sources keep C++20 (above).
+    if(MSVC)
+        set_target_properties(_vllm_fa2_C PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
+    endif()
 endif ()
 
 # FA3 requires CUDA 12.0 or later
