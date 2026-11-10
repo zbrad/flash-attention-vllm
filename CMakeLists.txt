@@ -226,15 +226,6 @@ if (FA2_ENABLED)
     # so the host .cpp sources would compile as C++17 and fail against PyTorch
     # nightly's ATen headers, which now require C++20.
     set_target_properties(_vllm_fa2_C PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
-
-    # MSVC: compile the .cu sources as C++17. torch's Caffe2/public/cuda.cmake sets CMAKE_CUDA_STANDARD to
-    # CMAKE_CXX_STANDARD (20), and in C++20 mode MSVC (19.44 and 19.50 both) rejects this CUTLASS's CuTe in the
-    # host pass (cute/stride.hpp(299): C3545 'Ints': parameter pack expects a non-type template argument). The same
-    # nvcc command with -std=c++17 compiles cleanly (D:\ptb\fa-onefile-variants.ps1, 2026-11-10). The host .cpp
-    # sources keep C++20 (above).
-    if(MSVC)
-        set_target_properties(_vllm_fa2_C PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
-    endif()
 endif ()
 
 # FA3 requires CUDA 12.0 or later
